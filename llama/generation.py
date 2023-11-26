@@ -116,7 +116,8 @@ class Llama:
         min_prompt_len = min(len(t) for t in prompt_tokens) # 提示句子中最短的提示长度
         max_prompt_len = max(len(t) for t in prompt_tokens) # 提示句子中最长的提示长度
         assert max_prompt_len <= params.max_seq_len
-        total_len = min(params.max_seq_len, max_gen_len + max_prompt_len) #最终要生成字总长度
+        # what is total_len ??
+        total_len = min(params.max_seq_len, max_gen_len + max_prompt_len) # 最终要生成字总长度
 
         pad_id = self.tokenizer.pad_id #填充字
         # 生成一个shape 为(提示token的组数,total_len) 初始字符为pad_id的tokens
@@ -124,31 +125,36 @@ class Llama:
         for k, t in enumerate(prompt_tokens):
             tokens[k, : len(t)] = torch.tensor(t, dtype=torch.long, device="cuda") # 挨个取出prompt中的每个句子 放到tokens中
         if logprobs:
-            token_logprobs = torch.zeros_like(tokens, dtype=torch.float)  # 定义一个跟tokens尺寸一致的概率token_logprobs
+            token_logprobs = torch.zeros_like(tokens, dtype=torch.float)           # 定义一个跟tokens尺寸一致的概率token_logprobs
 
         prev_pos = 0
         eos_reached = torch.tensor([False] * bsz, device="cuda") # 用于判断prompt中的每个句子是否已经处理完成
-        input_text_mask = tokens != pad_id #mask 标记那些不是填充字的地方
+        input_text_mask = tokens != pad_id                       # mask 标记那些不是填充字的地方
         for cur_pos in range(min_prompt_len, total_len):
+            # yr: ?? what does self.model.forward really do? what's the really input of self.model.forward ?
+            # yr: ?? what shape of logits ?
             logits = self.model.forward(tokens[:, prev_pos:cur_pos], prev_pos) # 以每个句子中的[prev_pos:cur_pos]部分作为输入去推理
             if logprobs:
                 # 如果开启了计算概率，就会把当前输出的序列logits，与原始提示中的序列右移一位之后
+                # yr: here we use cross_entropy to calculate the loss, only sentence length that are larger than 
+                #     cur_pos(first time is min_prompt_len) will be calculated
                 token_logprobs[:, prev_pos + 1 : cur_pos + 1] = -F.cross_entropy(
                     input=logits.transpose(1, 2),
                     target=tokens[:, prev_pos + 1 : cur_pos + 1], #shape=(bst,cur_pos-prev_pos)
                     reduction="none",
-                    ignore_index=pad_id, #这里需要注意一下，ignore_index参数的作用是忽略target中为pad_id所对应的logits分量
-                                        #也就说当target右移到了pad_id，那么他与logits计算的loss不对整体loss产生影响，也就是你预测的是啥就是啥
-                                        #target也不知道正确答案了
+                    ignore_index=pad_id, # 这里需要注意一下，ignore_index参数的作用是忽略target中为pad_id所对应的logits分量
+                                         # 也就说当target右移到了pad_id，那么他与logits计算的loss不对整体loss产生影响，也就是你预测的是啥就是啥
+                                         # target也不知道正确答案了
                 )
             if temperature > 0:
-                probs = torch.softmax(logits[:, -1] / temperature, dim=-1) #带温度系数的softmax
-                next_token = sample_top_p(probs, top_p) #按sample_top_p的方式取next_token
+                probs = torch.softmax(logits[:, -1] / temperature, dim=-1) # 带温度系数的softmax
+                next_token = sample_top_p(probs, top_p)                    # 按sample_top_p的方式取next_token
             else:
-                next_token = torch.argmax(logits[:, -1], dim=-1) #之间取概率最大的next_token
+                next_token = torch.argmax(logits[:, -1], dim=-1)           # 之间取概率最大的next_token
 
             next_token = next_token.reshape(-1)
             # only replace token if prompt has already been generated
+            # yr: ?? what doese torch.where do ?
             next_token = torch.where(
                 input_text_mask[:, cur_pos], tokens[:, cur_pos], next_token
             )
