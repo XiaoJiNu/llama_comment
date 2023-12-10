@@ -133,14 +133,15 @@ class Llama:
         for cur_pos in range(min_prompt_len, total_len):
             # yr: ?? what does self.model.forward really do? what's the really input of self.model.forward ?
             # yr: ?? what shape of logits ?
+            # yr: in attention, use kv cache to calculate the attention
             logits = self.model.forward(tokens[:, prev_pos:cur_pos], prev_pos) # 以每个句子中的[prev_pos:cur_pos]部分作为输入去推理
             if logprobs:
                 # 如果开启了计算概率，就会把当前输出的序列logits，与原始提示中的序列右移一位之后
                 # yr: here we use cross_entropy to calculate the loss, only sentence length that are larger than 
                 #     cur_pos(first time is min_prompt_len) will be calculated
-                token_logprobs[:, prev_pos + 1 : cur_pos + 1] = -F.cross_entropy(
+                token_logprobs[:, prev_pos + 1: cur_pos + 1] = -F.cross_entropy(
                     input=logits.transpose(1, 2),
-                    target=tokens[:, prev_pos + 1 : cur_pos + 1], #shape=(bst,cur_pos-prev_pos)
+                    target=tokens[:, prev_pos + 1: cur_pos + 1], #shape=(bst,cur_pos-prev_pos)
                     reduction="none",
                     ignore_index=pad_id, # 这里需要注意一下，ignore_index参数的作用是忽略target中为pad_id所对应的logits分量
                                          # 也就说当target右移到了pad_id，那么他与logits计算的loss不对整体loss产生影响，也就是你预测的是啥就是啥

@@ -34,8 +34,8 @@ class ModelArgs:
 class RMSNorm(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
         super().__init__()
-        self.eps = eps # ε
-        self.weight = nn.Parameter(torch.ones(dim)) #可学习参数γ
+        self.eps = eps  # ε
+        self.weight = nn.Parameter(torch.ones(dim))  # 可学习参数γ
 
     def _norm(self, x):
         # RMSNorm
@@ -71,10 +71,11 @@ def reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor):
     # (1,x.shape[1],1,x.shape[-1])
     return freqs_cis.view(*shape)
 
+
 def apply_rotary_emb(
-    xq: torch.Tensor,
-    xk: torch.Tensor,
-    freqs_cis: torch.Tensor,
+        xq: torch.Tensor,
+        xk: torch.Tensor,
+        freqs_cis: torch.Tensor,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     # xq.shape = [bsz, seqlen, self.n_local_heads, self.head_dim]
     # xq_.shape = [bsz, seqlen, self.n_local_heads, self.head_dim//2 , 2]
@@ -82,10 +83,9 @@ def apply_rotary_emb(
     # 所以经过view_as_complex变换后xq_.shape = [bsz, seqlen, self.n_local_heads, self.head_dim//2]
     xq_ = torch.view_as_complex(xq.float().reshape(*xq.shape[:-1], -1, 2))
     xk_ = torch.view_as_complex(xk.float().reshape(*xk.shape[:-1], -1, 2))
-    
-    
-    freqs_cis = reshape_for_broadcast(freqs_cis, xq_) # freqs_cis.shape = (1,x.shape[1],1,x.shape[-1])
-    
+
+    freqs_cis = reshape_for_broadcast(freqs_cis, xq_)  # freqs_cis.shape = (1,x.shape[1],1,x.shape[-1])
+
     # xq_ 与freqs_cis广播哈达玛积
     # [bsz, seqlen, self.n_local_heads, self.head_dim//2] * [1,seqlen,1,self.head_dim//2]
     # torch.view_as_real用于将复数再转换回实数向量, 再经过flatten展平第4个维度 
@@ -113,28 +113,28 @@ class Attention(nn.Module):
         super().__init__()
         self.n_kv_heads = args.n_heads if args.n_kv_heads is None else args.n_kv_heads
         model_parallel_size = fs_init.get_model_parallel_world_size()
-        self.n_local_heads = args.n_heads // model_parallel_size  #Q的头数
-        self.n_local_kv_heads = self.n_kv_heads // model_parallel_size #KV的头数
+        self.n_local_heads = args.n_heads // model_parallel_size  # Q的头数
+        self.n_local_kv_heads = self.n_kv_heads // model_parallel_size  # KV的头数
         self.n_rep = self.n_local_heads // self.n_local_kv_heads
         self.head_dim = args.dim // args.n_heads
 
         self.wq = ColumnParallelLinear(
             args.dim,
-            args.n_heads * self.head_dim, # Q的头数* head_dim
+            args.n_heads * self.head_dim,  # Q的头数* head_dim
             bias=False,
             gather_output=False,
             init_method=lambda x: x,
         )
         self.wk = ColumnParallelLinear(
             args.dim,
-            self.n_kv_heads * self.head_dim, # K的头数* head_dim
+            self.n_kv_heads * self.head_dim,  # K的头数* head_dim
             bias=False,
             gather_output=False,
             init_method=lambda x: x,
         )
         self.wv = ColumnParallelLinear(
             args.dim,
-            self.n_kv_heads * self.head_dim, # V的头数* head_dim
+            self.n_kv_heads * self.head_dim,  # V的头数* head_dim
             bias=False,
             gather_output=False,
             init_method=lambda x: x,
@@ -151,7 +151,7 @@ class Attention(nn.Module):
             (
                 args.max_batch_size,
                 args.max_seq_len,
-                self.n_local_kv_heads, #KV的头数
+                self.n_local_kv_heads,  # KV的头数
                 self.head_dim,
             )
         ).cuda()
@@ -159,17 +159,17 @@ class Attention(nn.Module):
             (
                 args.max_batch_size,
                 args.max_seq_len,
-                self.n_local_kv_heads, #KV的头数
+                self.n_local_kv_heads,  # KV的头数
                 self.head_dim,
             )
         ).cuda()
 
     def forward(
-        self,
-        x: torch.Tensor,
-        start_pos: int,
-        freqs_cis: torch.Tensor,
-        mask: Optional[torch.Tensor],
+            self,
+            x: torch.Tensor,
+            start_pos: int,
+            freqs_cis: torch.Tensor,
+            mask: Optional[torch.Tensor],
     ):
         bsz, seqlen, _ = x.shape
         xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
@@ -178,31 +178,35 @@ class Attention(nn.Module):
         xk = xk.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
         xv = xv.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
 
-        xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis) #嵌入RoPE位置编码
+        xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)  # 嵌入RoPE位置编码
         # 设备转换
         self.cache_k = self.cache_k.to(xq)
         self.cache_v = self.cache_v.to(xq)
-        
+
         # 按此时序列的句子长度把kv添加到cache中
         # 初始在prompt阶段seqlen>=1, 后续生成过程中seqlen==1
-        self.cache_k[:bsz, start_pos : start_pos + seqlen] = xk
-        self.cache_v[:bsz, start_pos : start_pos + seqlen] = xv
-        
+        # yr: cache_k's shape: self.max_batch_size * self.max_seq_len * self.n_local_kv_heads * self.head_dim
+        self.cache_k[:bsz, start_pos: start_pos + seqlen] = xk
+        self.cache_v[:bsz, start_pos: start_pos + seqlen] = xv
+
         # 读取新进来的token所计算得到的k和v
         keys = self.cache_k[:bsz, : start_pos + seqlen]
         values = self.cache_v[:bsz, : start_pos + seqlen]
 
         # repeat k/v heads if n_kv_heads < n_heads
-        keys = repeat_kv(keys, self.n_rep)  # (bs, seqlen, n_local_heads, head_dim)
+        keys = repeat_kv(keys, self.n_rep)      # (bs, seqlen, n_local_heads, head_dim)
         values = repeat_kv(values, self.n_rep)  # (bs, seqlen, n_local_heads, head_dim)
 
         xq = xq.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
         keys = keys.transpose(1, 2)
         values = values.transpose(1, 2)
-        #计算q*k
+        # 计算q*k
         scores = torch.matmul(xq, keys.transpose(2, 3)) / math.sqrt(self.head_dim)
         if mask is not None:
-            #加入mask，使得前面的token在于后面的token计算attention时得分为0，mask掉
+            # yr: 因为decoder时，每个token只需要关注当前token以及之前token的attention得分，所以这里加入mask。
+            # yr: 并且，当前token的q只需要和当前token以及前面的token的k,v做attention操作，我们只求当前token的预测值，
+            # yr: 所以，只需要存储当前token以及前面的token的k,v
+            # 加入mask，使得前面的token在于后面的token计算attention时得分为0，mask掉
             scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
         scores = F.softmax(scores.float(), dim=-1).type_as(xq)
         output = torch.matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
@@ -212,11 +216,11 @@ class Attention(nn.Module):
 
 class FeedForward(nn.Module):
     def __init__(
-        self,
-        dim: int,
-        hidden_dim: int,
-        multiple_of: int,
-        ffn_dim_multiplier: Optional[float],
+            self,
+            dim: int,
+            hidden_dim: int,
+            multiple_of: int,
+            ffn_dim_multiplier: Optional[float],
     ):
         super().__init__()
         hidden_dim = int(2 * hidden_dim / 3)
@@ -259,11 +263,11 @@ class TransformerBlock(nn.Module):
         self.ffn_norm = RMSNorm(args.dim, eps=args.norm_eps)
 
     def forward(
-        self,
-        x: torch.Tensor,
-        start_pos: int,
-        freqs_cis: torch.Tensor,
-        mask: Optional[torch.Tensor],
+            self,
+            x: torch.Tensor,
+            start_pos: int,
+            freqs_cis: torch.Tensor,
+            mask: Optional[torch.Tensor],
     ):
         h = x + self.attention.forward(
             self.attention_norm(x), start_pos, freqs_cis, mask
@@ -301,7 +305,7 @@ class Transformer(nn.Module):
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
         self.freqs_cis = self.freqs_cis.to(h.device)
-        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+        freqs_cis = self.freqs_cis[start_pos: start_pos + seqlen]
 
         mask = None
         if seqlen > 1:
@@ -317,4 +321,3 @@ class Transformer(nn.Module):
         h = self.norm(h)
         output = self.output(h).float()
         return output
-
