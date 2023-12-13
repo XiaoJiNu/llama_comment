@@ -207,6 +207,8 @@ class Attention(nn.Module):
             # yr: 并且，当前token的q只需要和当前token以及前面的token的k,v做attention操作，我们只求当前token的预测值，
             # yr: 所以，只需要存储当前token以及前面的token的k,v
             # 加入mask，使得前面的token在于后面的token计算attention时得分为0，mask掉
+
+            # yr: mask对应值为负无穷大
             scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
         scores = F.softmax(scores.float(), dim=-1).type_as(xq)
         output = torch.matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
@@ -283,6 +285,13 @@ class Transformer(nn.Module):
         self.vocab_size = params.vocab_size
         self.n_layers = params.n_layers
 
+        # params.vocab_size: 词汇数量
+        # params.dim: embedding后每个token的维度
+        # 假设输入tokens维度为 bsz*seqlen
+        # 则embedding后，输出维度为 bsz*seqlen*params.dim
+        # 计算过程，将token表示为one-hot形式，维度为 bsz*seqlen*params.vocab_size，再乘以embedding权重的维度
+        #   params.vocab_size*params.dim，(bsz*seqlen*params.vocab_size) * (params.vocab_size*params.dim),输出维度为
+        #   bsz*seqlen*params.dim
         self.tok_embeddings = ParallelEmbedding(
             params.vocab_size, params.dim, init_method=lambda x: x
         )
