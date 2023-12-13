@@ -287,11 +287,12 @@ class Transformer(nn.Module):
 
         # params.vocab_size: 词汇数量
         # params.dim: embedding后每个token的维度
-        # 假设输入tokens维度为 bsz*seqlen
-        # 则embedding后，输出维度为 bsz*seqlen*params.dim
-        # 计算过程，将token表示为one-hot形式，维度为 bsz*seqlen*params.vocab_size，再乘以embedding权重的维度
-        #   params.vocab_size*params.dim，(bsz*seqlen*params.vocab_size) * (params.vocab_size*params.dim),输出维度为
-        #   bsz*seqlen*params.dim
+        # 输入维度：假设输入tokens维度为    bsz*seqlen
+        # 输出维度：embedding后，输出维度为 bsz*seqlen*dim
+        # 计算过程：
+        #   embedding权重是一个lut表，维度为 vocab_size*dim，每一行表示一个token对应的向量。这个权重可以学习，也可以固定。
+        #   每个token根据它在字典中的索引号idx去lut表中索引第idx行对应的向量，所以，输入tokens的维度bsz*seqlen变成了
+        #   bsz*seqlen*dim
         self.tok_embeddings = ParallelEmbedding(
             params.vocab_size, params.dim, init_method=lambda x: x
         )
